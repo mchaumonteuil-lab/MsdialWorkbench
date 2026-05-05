@@ -203,7 +203,69 @@ public sealed class GcmsProcess
             });
         }
         await Task.WhenAll(tasks);
-        
+
+        // ---- Per-sample QC report (one TSV row per analysis file) ----
+        // Runs even when alignment is disabled.
+        try {
+            var reportPath = Path.Combine(outputFolder, "Report_PerFile.tsv");
+            using var rsw = new StreamWriter(reportPath, append: false);
+            rsw.WriteLine(string.Join("\t",
+                "FileID", "FileName", "FileClass", "FilePath", "FileSize_MB",
+                "ScanCount", "RT_min_min", "RT_max_min", "RT_duration_min", "AcquisitionRate_Hz",
+                "Mass_min", "Mass_max", "Intensity_min", "Intensity_max",
+                "PeakWidth_avg_min", "PeakWidth_median_min", "PeakWidth_stdev_min",
+                "PeakHeight_avg", "PeakHeight_median", "PeakHeight_stdev",
+                "TotalPeaks", "AnnotatedPeaks", "AnnotationRate_pct"));
+
+            foreach (var file in files) {
+                var s = file.ChromPeakFeaturesSummary;
+                long size = 0;
+                try { size = new FileInfo(file.AnalysisFilePath).Length; } catch { /* ignore */ }
+                int scanCount = (s != null) ? Math.Max(0, s.MaxScanNumber - s.MinScanNumber + 1) : 0;
+                double rtDuration = (s != null) ? (s.MaxRetentionTime - s.MinRetentionTime) : 0d;
+                double acqHz = (rtDuration > 0d) ? (scanCount / (rtDuration * 60d)) : 0d;
+
+                int total = 0, annotated = 0;
+                try {
+                    var sfs = file.LoadSpectrumFeatures();
+                    total = sfs.Items.Count;
+                    annotated = sfs.Items.Count(sf => !sf.AnnotatedMSDecResult.IsUnknown);
+                }
+                catch { /* leave at zero if unavailable */ }
+                double annRate = (total > 0) ? (100d * annotated / total) : 0d;
+
+                rsw.WriteLine(string.Join("\t",
+                    file.AnalysisFileId,
+                    file.AnalysisFileName,
+                    file.AnalysisFileClass,
+                    file.AnalysisFilePath,
+                    Math.Round(size / 1048576d, 2),
+                    scanCount,
+                    s != null ? Math.Round(s.MinRetentionTime, 4).ToString() : "",
+                    s != null ? Math.Round(s.MaxRetentionTime, 4).ToString() : "",
+                    Math.Round(rtDuration, 4),
+                    Math.Round(acqHz, 3),
+                    s != null ? Math.Round(s.MinMass, 4).ToString() : "",
+                    s != null ? Math.Round(s.MaxMass, 4).ToString() : "",
+                    s != null ? Math.Round(s.MinIntensity, 0).ToString() : "",
+                    s != null ? Math.Round(s.MaxIntensity, 0).ToString() : "",
+                    s != null ? Math.Round(s.AveragePeakWidthOnRtAxis, 4).ToString() : "",
+                    s != null ? Math.Round(s.MedianPeakWidthOnRtAxis, 4).ToString() : "",
+                    s != null ? Math.Round(s.StdevPeakWidthOnRtAxis, 4).ToString() : "",
+                    s != null ? Math.Round(s.AveragePeakHeightOnRtAxis, 0).ToString() : "",
+                    s != null ? Math.Round(s.MedianPeakHeightOnRtAxis, 0).ToString() : "",
+                    s != null ? Math.Round(s.StdevPeakHeightOnRtAxis, 0).ToString() : "",
+                    total,
+                    annotated,
+                    Math.Round(annRate, 2)));
+            }
+            Console.WriteLine($"Per-file report written -> {Path.GetFileName(reportPath)} ({files.Count} rows)");
+        }
+        catch (Exception ex) {
+            Console.WriteLine($"Per-file report failed: {ex.Message}");
+        }
+        // ---- end report ----
+
         storage.MsdialGcmsParameter.ProjectParam.MsdialVersionNumber = $"Msdial console {Resources.VERSION}";
 
         if (storage.MsdialGcmsParameter.TogetherWithAlignment)
@@ -235,14 +297,17 @@ public sealed class GcmsProcess
             var spotExporter = new AlignmentCSVExporter("\t");
 
             // Match the default export set of the Windows GUI (GcmsMethodModel.cs)
+            // plus per-sample peak start/end RT (extra info useful for headless QC)
             var exportTypes = new (string Label, string ExportType, string FileSuffix)[] {
-                ("Raw data (Height)", "Height", "Height"),
-                ("Raw data (Area)",   "Area",   "Area"),
-                ("Peak ID",           "ID",     "PeakID"),
-                ("Quant mass",        "MZ",     "QuantMass"),
-                ("Retention time",    "RT",     "Rt"),
-                ("Retention index",   "RI",     "Ri"),
-                ("S/N",               "SN",     "SN"),
+                ("Raw data (Height)", "Height",   "Height"),
+                ("Raw data (Area)",   "Area",     "Area"),
+                ("Peak ID",           "ID",       "PeakID"),
+                ("Quant mass",        "MZ",       "QuantMass"),
+                ("Retention time",    "RT",       "Rt"),
+                ("Peak start RT",     "RT_LEFT",  "RtStart"),
+                ("Peak end RT",       "RT_RIGHT", "RtEnd"),
+                ("Retention index",   "RI",       "Ri"),
+                ("S/N",               "SN",       "SN"),
             };
 
             LegacyQuantValueAccessor? primaryQuantAccessor = null;

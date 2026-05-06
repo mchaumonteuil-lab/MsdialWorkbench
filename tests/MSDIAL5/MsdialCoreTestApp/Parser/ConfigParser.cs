@@ -382,7 +382,8 @@ namespace CompMs.App.MsdialConsole.Parser
 
 
                 //Deconvolution
-                case "sigma window valueLower": if (float.TryParse(valueLower, out float sigmaWindow)) param.SigmaWindowValue = sigmaWindow; return true;
+                case "sigma window valueLower": // legacy typo; kept for back-compat with old method files
+                case "sigma window value": if (float.TryParse(valueLower, out float sigmaWindow)) param.SigmaWindowValue = sigmaWindow; return true;
                 case "amplitude cut off": if (float.TryParse(valueLower, out float ms2ampthreshold)) param.ChromDecBaseParam.AmplitudeCutoff = ms2ampthreshold; return true;
                 case "relative amplitude cut off": if (float.TryParse(valueLower, out float ms2relativeampthreshold)) param.ChromDecBaseParam.RelativeAmplitudeCutoff = ms2relativeampthreshold; return true;
                 case "keep isotope range": if (float.TryParse(valueLower, out float keepisotoperange)) param.KeptIsotopeRange = keepisotoperange; return true;
@@ -478,7 +479,8 @@ namespace CompMs.App.MsdialConsole.Parser
                 case "keep reference matched metabolites": if (valueLower == "true" || valueLower == "false") param.IsKeepRefMatchedMetaboliteFeatures = bool.Parse(valueLower); return true;
                 case "keep suggested metabolites": if (valueLower == "true" || valueLower == "false") param.IsKeepSuggestedMetaboliteFeatures = bool.Parse(valueLower); return true;
                 case "keep removable features and assigned tag for checking": if (valueLower == "true" || valueLower == "false") param.IsKeepRemovableFeaturesAndAssignedTagForChecking = bool.Parse(valueLower); return true;
-                case "replace true zero valueLowers with 1/2 of minimum peak height over all samples": if (valueLower == "true" || valueLower == "false") param.IsReplaceTrueZeroValuesWithHalfOfMinimumPeakHeightOverAllSamples = bool.Parse(valueLower); return true;
+                case "replace true zero valueLowers with 1/2 of minimum peak height over all samples": // legacy typo; kept for back-compat
+                case "replace true zero values with 1/2 of minimum peak height over all samples": if (valueLower == "true" || valueLower == "false") param.IsReplaceTrueZeroValuesWithHalfOfMinimumPeakHeightOverAllSamples = bool.Parse(valueLower); return true;
 
                 //Retentiontime correction
                 case "execute rt correction": if (valueLower == "true" || valueLower == "false") param.RetentionTimeCorrectionCommon.RetentionTimeCorrectionParam.ExcuteRtCorrection = bool.Parse(valueLower); return true;

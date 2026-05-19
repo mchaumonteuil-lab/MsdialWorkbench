@@ -253,6 +253,16 @@ namespace CompMs.App.MsdialConsole.Parser
                         param.MS2DataType = (MSDataType)Enum.Parse(typeof(MSDataType), valueLower, true);
                     return true;
 
+                case "number of threads":
+                    if (int.TryParse(valueLower, out int numThreads))
+                        param.ProcessBaseParam.NumThreads = numThreads;
+                    return true;
+
+                case "number of parallel files":
+                    if (int.TryParse(valueLower, out int parallelFileCount))
+                        param.ProcessBaseParam.ParallelFileCount = parallelFileCount;
+                    return true;
+
                 case "ion mode":
                     if (valueLower == "positive" || valueLower == "negative")
                         param.IonMode = (IonMode)Enum.Parse(typeof(IonMode), valueLower, true);

@@ -578,6 +578,7 @@ namespace CompMs.MsdialCore.Parameter
             pStrings.Add("# Process parameters");
             pStrings.Add(String.Join(": ", new string[] { "Process option", ProcessOption.ToString() }));
             pStrings.Add(String.Join(": ", new string[] { "Number of threads", NumThreads.ToString() }));
+            pStrings.Add(String.Join(": ", new string[] { "Number of parallel files", ProcessBaseParam.ParallelFileCount.ToString() }));
 
             pStrings.Add("\r\n");
             pStrings.Add("# Feature detection parameters");
@@ -1059,9 +1060,13 @@ namespace CompMs.MsdialCore.Parameter
         public ProcessOption ProcessOption { get; set; } = ProcessOption.All;
         [Key(1)]
         public int NumThreads { get; set; } = 2;
+        [Key(2)]
+        public int ParallelFileCount { get; set; } = 1;
 
         [IgnoreMember]
         public int UsableNumThreads => Math.Max(1, Math.Min(Environment.ProcessorCount, NumThreads));
+        [IgnoreMember]
+        public int UsableParallelFileCount => Math.Max(1, Math.Min(Environment.ProcessorCount, ParallelFileCount));
     }
 
     // MS-CleanR (post curator) parameters

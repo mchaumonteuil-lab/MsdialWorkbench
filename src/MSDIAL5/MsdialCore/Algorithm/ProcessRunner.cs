@@ -16,7 +16,7 @@ namespace CompMs.MsdialCore.Algorithm
     public sealed class ProcessRunner(IFileProcessor processor, int numParallel)
     {
         private readonly IFileProcessor _processor = processor ?? throw new ArgumentNullException(nameof(processor));
-        private readonly int _numParallel = numParallel;
+        private readonly int _numParallel = Math.Max(1, numParallel);
 
         public Task RunAllAsync(IReadOnlyList<AnalysisFileBean> analysisFiles, ProcessOption option, IEnumerable<IProgress<int>?> reportActions, Action? afterEachRun, CancellationToken token) {
             var consumer = new Consumer(_processor, _numParallel, analysisFiles, reportActions, afterEachRun);

@@ -87,7 +87,7 @@ public sealed class LcimmsProcess {
         var providerFactory = new StandardDataProviderFactory(5, false);
         var accProviderFactory = new LcimmsAccumulateDataProviderFactory();
         var process = new FileProcess(providerFactory, accProviderFactory, annotationProcess, evaluator, storage, isGuiProcess: false);
-        var runner = new ProcessRunner(process, storage.Parameter.NumThreads / 2);
+        var runner = new ProcessRunner(process, storage.Parameter.ProcessBaseParam.UsableParallelFileCount);
         await runner.RunAllAsync(files, ProcessOption.All, Enumerable.Repeat(default(IProgress<int>?), files.Count), null, default).ConfigureAwait(false);
 
         IAnalysisExporter<ChromatogramPeakFeatureCollection> peak_MspExporter = new AnalysisMspExporter(storage.DataBaseMapper, storage.Parameter);

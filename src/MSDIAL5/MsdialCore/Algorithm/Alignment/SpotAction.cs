@@ -31,6 +31,9 @@ namespace CompMs.MsdialCore.Algorithm.Alignment
 
         public void Process(IEnumerable<AlignmentSpotProperty> spots) {
             var spotList = spots.Where(n => n.IsReferenceMatched(_evaluator) && !n.Name.StartsWith("Putative")).OrderByDescending(spot => spot.MatchResults.Representative.LibraryID).ToList();
+            if (spotList.Count == 0) {
+                return;
+            }
             var currentPeakId = 0;
             var currentLibraryId = spotList[currentPeakId].MatchResults.Representative.LibraryID;
 

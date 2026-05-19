@@ -98,7 +98,7 @@ public sealed class ImmsProcess
         }
 
         var processor = new FileProcess(storage, providerFactory, mspAnnotator, txtDBAnnotator, evaluator);
-        var runner = new ProcessRunner(processor, storage.Parameter.NumThreads / 2);
+        var runner = new ProcessRunner(processor, storage.Parameter.ProcessBaseParam.UsableParallelFileCount);
         await runner.RunAllAsync(files, ProcessOption.All, Enumerable.Repeat(default(IProgress<int>?), files.Count), null, default).ConfigureAwait(false);
 
         IAnalysisExporter<ChromatogramPeakFeatureCollection> peak_MspExporter = new AnalysisMspExporter(storage.DataBaseMapper, storage.Parameter);

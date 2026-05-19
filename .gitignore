@@ -3,6 +3,7 @@
 
 # Mes folders privée
 build_linux_output/
+compilation/
 
 # User-specific files
 *.suo

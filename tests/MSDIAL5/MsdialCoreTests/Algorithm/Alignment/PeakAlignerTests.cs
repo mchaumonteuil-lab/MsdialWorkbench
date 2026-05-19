@@ -87,6 +87,12 @@ namespace CompMs.MsdialCore.Algorithm.Alignment.Tests
             Assert.AreEqual(200, container.AlignmentSpotProperties[6].MassCenter);
         }
 
+        [TestMethod()]
+        public void MatchResultAnnotationDeduplicator_WithNoRefMatches_DoesNotThrow() {
+            var deduplicator = new MatchResultAnnotationDeduplicator(new FacadeMatchResultEvaluator());
+            deduplicator.Process(new List<AlignmentSpotProperty>());
+        }
+
         PeakAligner CreateAligner(DataAccessor accessor, ParameterBase parameter) {
             var iupac = new IupacDatabase();
             var joiner = new MockJoiner();

@@ -89,7 +89,7 @@ public sealed class DimsProcess {
             evaluator,
             mapper);
         var process = new ProcessFile(providerFactory, storage, annotationProcess, evaluator);
-        var runner = new ProcessRunner(process, storage.MsdialDimsParameter.NumThreads / 2);
+        var runner = new ProcessRunner(process, storage.MsdialDimsParameter.ProcessBaseParam.UsableParallelFileCount);
         await runner.RunAllAsync(files, ProcessOption.All, Enumerable.Repeat(default(IProgress<int>?), files.Count), null, default).ConfigureAwait(false);
 
         IAnalysisExporter<ChromatogramPeakFeatureCollection> peak_MspExporter = new AnalysisMspExporter(storage.DataBaseMapper, storage.MsdialDimsParameter);

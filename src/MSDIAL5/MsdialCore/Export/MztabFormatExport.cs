@@ -1339,7 +1339,7 @@ namespace CompMs.MsdialCore.Export
         }
 
         static string UnknownIfEmpty(string value) => string.IsNullOrEmpty(value) ? "Unknown" : value;
-        static string ValueOrNull(string value) => string.IsNullOrEmpty(value) ? "null" : value;
+        static string ValueOrNull(string? value) => string.IsNullOrEmpty(value) ? "null" : value;
 
 
         public class Database

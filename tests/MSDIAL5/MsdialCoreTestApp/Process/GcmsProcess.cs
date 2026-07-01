@@ -180,20 +180,29 @@ public sealed class GcmsProcess
     }
 
     private async Task<int> ExecuteAsync(MsdialGcmsDataStorage storage, string outputFolder, bool isProjectSaved) {
+        Directory.CreateDirectory(outputFolder);
+        var runLogPath = Path.Combine(outputFolder, "MSDIAL_run_log.txt");
+        using var logger = new ProcessRunLogger(runLogPath);
+        var files = storage.AnalysisFiles;
+
+        logger.LogInfo("GCMS run started");
+        logger.LogInfo($"AnalysisFiles={files.Count}, ParallelFiles={storage.MsdialGcmsParameter.ProcessBaseParam.UsableParallelFileCount}, ProcessorCount={Environment.ProcessorCount}, Alignment={storage.MsdialGcmsParameter.TogetherWithAlignment}, ProjectSaved={isProjectSaved}");
+        logger.LogInfo($"Method file project folder={storage.MsdialGcmsParameter.ProjectParam.ProjectFolderPath}, Name={storage.MsdialGcmsParameter.ProjectParam.ProjectFileName}");
+
         var projectDataStorage = new ProjectDataStorage(new ProjectParameter(DateTime.Now, storage.MsdialGcmsParameter.ProjectParam.ProjectFolderPath, Path.ChangeExtension(storage.MsdialGcmsParameter.ProjectParam.ProjectFileName, ".mdproject")));
         projectDataStorage.AddStorage(storage);
 
-        var files = storage.AnalysisFiles;
         var metaAccessor = new GcmsAnalysisMetadataAccessor(storage.DataBaseMapper, new DelegateMsScanPropertyLoader<SpectrumFeature>(s => s.AnnotatedMSDecResult.MSDecResult));
         var providerFactory = new StandardDataProviderFactory(isGuiProcess: false);
-        var process = new FileProcess(providerFactory, storage, new CalculateMatchScore(storage.DataBases.MetabolomicsDataBases.FirstOrDefault(), storage.MsdialGcmsParameter.MspSearchParam, storage.MsdialGcmsParameter.RetentionType));
-        var runner = new ProcessRunner(process, storage.MsdialGcmsParameter.NumThreads / 2);
+        var process = new FileProcess(providerFactory, storage, new CalculateMatchScore(storage.DataBases.MetabolomicsDataBases.FirstOrDefault(), storage.MsdialGcmsParameter.MspSearchParam, storage.MsdialGcmsParameter.RetentionType), logger.LogInfo);
+        var runner = new ProcessRunner(process, storage.MsdialGcmsParameter.ProcessBaseParam.UsableParallelFileCount);
         await runner.RunAllAsync(files, ProcessOption.All, Enumerable.Repeat(default(IProgress<int>?), files.Count), null, default).ConfigureAwait(false);
 
         var tasks = new Task[files.Count];
         using var sem = new SemaphoreSlim(Environment.ProcessorCount / 2);
         var exporterFactory = new AnalysisCSVExporterFactory("\t");
         var scanExporter = exporterFactory.CreateExporter(metaAccessor);
+        logger.LogInfo("Scan export started");
         for (int i = 0; i < files.Count; i++) {
             var file = files[i];
             tasks[i] = Task.Run(() => {
@@ -203,11 +212,78 @@ public sealed class GcmsProcess
             });
         }
         await Task.WhenAll(tasks);
-        
+        logger.LogInfo("Scan export completed");
+
+        // ---- Per-sample QC report (one TSV row per analysis file) ----
+        // Runs even when alignment is disabled.
+        try {
+            var reportPath = Path.Combine(outputFolder, "Report_PerFile.tsv");
+            logger.LogInfo($"Per-file report started: {reportPath}");
+            using var rsw = new StreamWriter(reportPath, append: false);
+            rsw.WriteLine(string.Join("\t",
+                "FileID", "FileName", "FileClass", "FilePath", "FileSize_MB",
+                "ScanCount", "RT_min_min", "RT_max_min", "RT_duration_min", "AcquisitionRate_Hz",
+                "Mass_min", "Mass_max", "Intensity_min", "Intensity_max",
+                "PeakWidth_avg_min", "PeakWidth_median_min", "PeakWidth_stdev_min",
+                "PeakHeight_avg", "PeakHeight_median", "PeakHeight_stdev",
+                "TotalPeaks", "AnnotatedPeaks", "AnnotationRate_pct"));
+
+            foreach (var file in files) {
+                var s = file.ChromPeakFeaturesSummary;
+                long size = 0;
+                try { size = new FileInfo(file.AnalysisFilePath).Length; } catch { /* ignore */ }
+                int scanCount = (s != null) ? Math.Max(0, s.MaxScanNumber - s.MinScanNumber + 1) : 0;
+                double rtDuration = (s != null) ? (s.MaxRetentionTime - s.MinRetentionTime) : 0d;
+                double acqHz = (rtDuration > 0d) ? (scanCount / (rtDuration * 60d)) : 0d;
+
+                int total = 0, annotated = 0;
+                try {
+                    var sfs = file.LoadSpectrumFeatures();
+                    total = sfs.Items.Count;
+                    annotated = sfs.Items.Count(sf => !sf.AnnotatedMSDecResult.IsUnknown);
+                }
+                catch { /* leave at zero if unavailable */ }
+                double annRate = (total > 0) ? (100d * annotated / total) : 0d;
+
+                rsw.WriteLine(string.Join("\t",
+                    file.AnalysisFileId,
+                    file.AnalysisFileName,
+                    file.AnalysisFileClass,
+                    file.AnalysisFilePath,
+                    Math.Round(size / 1048576d, 2),
+                    scanCount,
+                    s != null ? Math.Round(s.MinRetentionTime, 4).ToString() : "",
+                    s != null ? Math.Round(s.MaxRetentionTime, 4).ToString() : "",
+                    Math.Round(rtDuration, 4),
+                    Math.Round(acqHz, 3),
+                    s != null ? Math.Round(s.MinMass, 4).ToString() : "",
+                    s != null ? Math.Round(s.MaxMass, 4).ToString() : "",
+                    s != null ? Math.Round(s.MinIntensity, 0).ToString() : "",
+                    s != null ? Math.Round(s.MaxIntensity, 0).ToString() : "",
+                    s != null ? Math.Round(s.AveragePeakWidthOnRtAxis, 4).ToString() : "",
+                    s != null ? Math.Round(s.MedianPeakWidthOnRtAxis, 4).ToString() : "",
+                    s != null ? Math.Round(s.StdevPeakWidthOnRtAxis, 4).ToString() : "",
+                    s != null ? Math.Round(s.AveragePeakHeightOnRtAxis, 0).ToString() : "",
+                    s != null ? Math.Round(s.MedianPeakHeightOnRtAxis, 0).ToString() : "",
+                    s != null ? Math.Round(s.StdevPeakHeightOnRtAxis, 0).ToString() : "",
+                    total,
+                    annotated,
+                    Math.Round(annRate, 2)));
+            }
+            Console.WriteLine($"Per-file report written -> {Path.GetFileName(reportPath)} ({files.Count} rows)");
+            logger.LogInfo($"Per-file report written: {reportPath}, rows={files.Count}");
+        }
+        catch (Exception ex) {
+            Console.WriteLine($"Per-file report failed: {ex.Message}");
+            logger.LogInfo($"Per-file report failed: {ex.Message}");
+        }
+        // ---- end report ----
+
         storage.MsdialGcmsParameter.ProjectParam.MsdialVersionNumber = $"Msdial console {Resources.VERSION}";
 
         if (storage.MsdialGcmsParameter.TogetherWithAlignment)
         {
+            logger.LogInfo("Alignment started");
             ChromatogramSerializer<ChromatogramSpotInfo>? serializer;
             switch (storage.MsdialGcmsParameter.AlignmentIndexType) {
                 case AlignmentIndexType.RI:
@@ -231,11 +307,34 @@ public sealed class GcmsProcess
             MsdecResultsWriter.Write(alignmentFile.SpectraFilePath, decResults);
 
             var accessor = new GcmsAlignmentMetadataAccessor(storage.DataBaseMapper, storage.MsdialGcmsParameter, false);
-            var quantAccessor = new LegacyQuantValueAccessor("Height", storage.MsdialGcmsParameter);
             var stats = new[] { StatsValue.Average, StatsValue.Stdev };
+
+            logger.LogInfo($"Alignment finished: AlignmentSpots={result.AlignmentSpotProperties.Count}, RepresentativeDeconvolutions={decResults.Count}");
             var spotExporter = new AlignmentCSVExporter("\t");
-            using var stream = File.Open(Path.Combine(outputFolder, alignmentFile.FileName + ".mdalign"), FileMode.Create, FileAccess.Write, FileShare.Read);
-            spotExporter.Export(stream, result.AlignmentSpotProperties, decResults, files, new MulticlassFileMetaAccessor(0), accessor, quantAccessor, stats);
+
+            // Match the default export set of the Windows GUI (GcmsMethodModel.cs)
+            // plus per-sample peak start/end RT (extra info useful for headless QC)
+            var exportTypes = new (string Label, string ExportType, string FileSuffix)[] {
+                ("Raw data (Height)", "Height",   "Height"),
+                ("Raw data (Area)",   "Area",     "Area"),
+                ("Peak ID",           "ID",       "PeakID"),
+                ("Quant mass",        "MZ",       "QuantMass"),
+                ("Retention time",    "RT",       "Rt"),
+                ("Peak start RT",     "RT_LEFT",  "RtStart"),
+                ("Peak end RT",       "RT_RIGHT", "RtEnd"),
+                ("Retention index",   "RI",       "Ri"),
+                ("S/N",               "SN",       "SN"),
+            };
+
+            LegacyQuantValueAccessor? primaryQuantAccessor = null;
+            foreach (var et in exportTypes) {
+                var qAccessor = new LegacyQuantValueAccessor(et.ExportType, storage.MsdialGcmsParameter);
+                primaryQuantAccessor ??= qAccessor; // Height drives mzTab (matches GUI default)
+                var outFile = Path.Combine(outputFolder, $"{alignmentFile.FileName}_{et.FileSuffix}.mdalign");
+                Console.WriteLine($"Exporting {et.Label} -> {Path.GetFileName(outFile)}");
+                using var stream = File.Open(outFile, FileMode.Create, FileAccess.Write, FileShare.Read);
+                spotExporter.Export(stream, result.AlignmentSpotProperties, decResults, files, new MulticlassFileMetaAccessor(0), accessor, qAccessor, stats);
+            }
 
             var mztabm_filename = alignmentFile.FileName + ".mzTab";
             var mztabm_outputfile = Path.Combine(outputFolder, mztabm_filename);
@@ -250,7 +349,7 @@ public sealed class GcmsProcess
                 msdecs,
                 files,
                 accessor,
-                quantAccessor,
+                primaryQuantAccessor!,
                 stats,
                 mztabm_filename
             );
@@ -258,13 +357,16 @@ public sealed class GcmsProcess
 
         if (isProjectSaved)
         {
+            logger.LogInfo("Project save started");
             storage.MsdialGcmsParameter.ProjectParam.FinalSavedDate = DateTime.Now;
             using var stream = File.Open(projectDataStorage.ProjectParameter.FilePath, FileMode.Create);
             using IStreamManager streamManager = new ZipStreamManager(stream, System.IO.Compression.ZipArchiveMode.Create);
             projectDataStorage.Save(streamManager, new MsdialIntegrateSerializer(), file => new DirectoryTreeStreamManager(file), parameter => Console.WriteLine($"Save {parameter.ProjectFileName} failed")).Wait();
             streamManager.Complete();
+            logger.LogInfo("Project save finished");
         }
 
+        logger.LogInfo("GCMS run finished");
         return 0;
     }
 
@@ -295,6 +397,31 @@ public sealed class GcmsProcess
         }
         return decs;
     }
+
+        private sealed class ProcessRunLogger : IDisposable
+        {
+            private readonly StreamWriter _writer;
+            private readonly object _sync = new();
+
+            public ProcessRunLogger(string logFilePath) {
+                _writer = new StreamWriter(logFilePath, false, Encoding.UTF8) { AutoFlush = true };
+                _writer.WriteLine("Timestamp\tLevel\tMessage");
+            }
+
+            public void LogInfo(string message) {
+                Log("INFO", message);
+            }
+
+            private void Log(string level, string message) {
+                lock (_sync) {
+                    _writer.WriteLine($"{DateTime.Now:o}\t{level}\t{message}");
+                }
+            }
+
+            public void Dispose() {
+                _writer.Dispose();
+            }
+        }
 
 #region // error code
     private static readonly string _riDictionaryErrorMessage = """

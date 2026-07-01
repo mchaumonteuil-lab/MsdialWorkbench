@@ -34,8 +34,10 @@ namespace CompMs.MsdialGcMsApi.Process
         private readonly PeakSpotting _peakSpotting;
         private readonly Ms1Dec _ms1Deconvolution;
         private readonly Annotation _annotation;
+        private readonly Action<string>? _logger;
+        private readonly object _loggerLock = new();
 
-        public FileProcess(IDataProviderFactory<AnalysisFileBean> providerFactory, IMsdialDataStorage<MsdialGcmsParameter> storage, CalculateMatchScore calculateMatchScore) {
+        public FileProcess(IDataProviderFactory<AnalysisFileBean> providerFactory, IMsdialDataStorage<MsdialGcmsParameter> storage, CalculateMatchScore calculateMatchScore, Action<string>? logger = null) {
             if (storage is null || storage.Parameter is null) {
                 throw new ArgumentNullException(nameof(storage));
             }
@@ -45,10 +47,27 @@ namespace CompMs.MsdialGcMsApi.Process
             _peakSpotting = new PeakSpotting(storage.IupacDatabase, storage.Parameter);
             _ms1Deconvolution = new Ms1Dec(storage.Parameter);
             _annotation = new Annotation(calculateMatchScore, storage.Parameter);
+            _logger = logger;
+        }
+
+        private void Log(string message) {
+            if (_logger is null) {
+                return;
+            }
+            lock (_loggerLock) {
+                _logger(message);
+            }
+        }
+
+        private void LogStage(string fileName, string stage, TimeSpan? elapsed = null) {
+            var suffix = elapsed.HasValue ? $" elapsed={elapsed.Value.TotalSeconds:N2}s" : string.Empty;
+            Log($"File={fileName}\tStage={stage}{suffix}");
         }
 
         public async Task RunAsync(AnalysisFileBean analysisFile, ProcessOption option, IProgress<int>? progress, CancellationToken token = default) {
+            LogStage(analysisFile.AnalysisFileName, "Run started");
             if (!option.HasFlag(ProcessOption.PeakSpotting) && !option.HasFlag(ProcessOption.Identification)) {
+                LogStage(analysisFile.AnalysisFileName, $"Skipped: {option}");
                 return;
             }
 
@@ -59,7 +78,7 @@ namespace CompMs.MsdialGcMsApi.Process
             var carbon2RtDict = analysisFile.GetRiDictionary(_riDictionaryInfo);
             var riHandler = carbon2RtDict is null ? null : new RetentionIndexHandler(_riCompoundType, carbon2RtDict);
 
-            Console.WriteLine("Loading spectral information");
+            LogStage(analysisFile.AnalysisFileName, "Loading spectral information");
             var provider = _providerFactory.Create(analysisFile);
             token.ThrowIfCancellationRequested();
 
@@ -69,14 +88,15 @@ namespace CompMs.MsdialGcMsApi.Process
             var (chromPeakFeatures, msdecResults, spectra) = await getTask.ConfigureAwait(false);
 
             token.ThrowIfCancellationRequested();
-            var annotatedMSDecResults = Identification(msdecResults, option, progress);
+            var annotatedMSDecResults = Identification(analysisFile.AnalysisFileName, msdecResults, option, progress);
             var spectrumFeatureCollection = _ms1Deconvolution.GetSpectrumFeaturesByQuantMassInformation(analysisFile, spectra, annotatedMSDecResults);
             SetRetentionIndex(spectrumFeatureCollection, riHandler);
 
-            // save
+            LogStage(analysisFile.AnalysisFileName, "Saving results");
             await chromPeakFeatures.SerializeAsync(analysisFile, token);
             analysisFile.SaveMsdecResultWithAnnotationInfo(spectrumFeatureCollection.Items.Select(s => s.AnnotatedMSDecResult.MSDecResult).ToList());
             analysisFile.SaveSpectrumFeatures(spectrumFeatureCollection);
+            LogStage(analysisFile.AnalysisFileName, "Completed");
 
             progress?.Report((int)PROCESS_END);
         }
@@ -95,6 +115,7 @@ namespace CompMs.MsdialGcMsApi.Process
 
         private async Task<(ChromatogramPeakFeatureCollection, List<MSDecResult>, ReadOnlyCollection<RawSpectrum>)> DetectScans(AnalysisFileBean analysisFile, RetentionIndexHandler riHandler, IDataProvider provider, IProgress<int>? progress, CancellationToken token) {
             // feature detections
+            LogStage(analysisFile.AnalysisFileName, "PeakPickingStart");
             Console.WriteLine("Peak picking started");
             var reportSpotting = ReportProgress.FromRange(progress, PEAKSPOTTING_START, PEAKSPOTTING_END);
             var chromPeakFeatures_ = _peakSpotting.Run(analysisFile, provider, reportSpotting, token);
@@ -102,26 +123,33 @@ namespace CompMs.MsdialGcMsApi.Process
             SetRetentionIndex(chromPeakFeatures_, riHandler);
             await analysisFile.SetChromatogramPeakFeaturesSummaryAsync(provider, chromPeakFeatures_, token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
+            LogStage(analysisFile.AnalysisFileName, "PeakPickingEnd");
 
             // chrom deconvolutions
+            LogStage(analysisFile.AnalysisFileName, "DeconvolutionStart");
             Console.WriteLine("Deconvolution started");
             var reportDeconvolution = ReportProgress.FromRange(progress, DECONVOLUTION_START, DECONVOLUTION_END);
             var spectra = await provider.LoadMsSpectrumsAsync(token).ConfigureAwait(false);
             var msdecResults = _ms1Deconvolution.GetMSDecResults(spectra, chromPeakFeatures_, reportDeconvolution);
             SetRetentionIndex(msdecResults, riHandler);
             token.ThrowIfCancellationRequested();
+            LogStage(analysisFile.AnalysisFileName, "DeconvolutionEnd");
 
             return (chromPeakFeatures, msdecResults, spectra);
         }
 
-        private AnnotatedMSDecResult[] Identification(List<MSDecResult> msdecResults, ProcessOption option, IProgress<int> progress) {
+        private AnnotatedMSDecResult[] Identification(string fileName, List<MSDecResult> msdecResults, ProcessOption option, IProgress<int> progress) {
             if (option.HasFlag(ProcessOption.Identification)) {
                 // annotations
+                LogStage(fileName, "AnnotationStart");
                 Console.WriteLine("Annotation started");
                 var reportAnnotation = ReportProgress.FromRange(progress, ANNOTATION_START, ANNOTATION_END);
-                return _annotation.MainProcess(msdecResults, reportAnnotation);
+                var results = _annotation.MainProcess(msdecResults, reportAnnotation);
+                LogStage(fileName, "AnnotationEnd");
+                return results;
             }
             else {
+                LogStage(fileName, "Annotation skipped");
                 return msdecResults.Select(r => new AnnotatedMSDecResult(r, new())).ToArray();
             }
         }

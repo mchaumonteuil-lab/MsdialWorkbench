@@ -9,6 +9,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 
 namespace CompMs.MsdialCore.Export.Tests
@@ -54,8 +55,17 @@ namespace CompMs.MsdialCore.Export.Tests
             CollectionAssert.AreEqual(buffer, stream.GetBuffer());
         }
 
-
         [TestMethod()]
+        public void SetOntology_WhenOntologyIsNull_ReturnsNullString() {
+            var spot = new AlignmentSpotProperty { Ontology = null };
+            var method = typeof(MztabFormatExporter).GetMethod("SetOntology", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(method);
+            var result = method!.Invoke(null, new object[] { spot }) as List<string>;
+            Assert.IsNotNull(result);
+            Assert.AreEqual("null", result![0]);
+        }
+
+        //[TestMethod()]
         //[DeploymentItem(@"Resources\Export\small_test_project.mdproject", @"Resources\Export")]
         [DeploymentItem(@"Resources\Export\Dataset_2025_07_31_12_31_11.mddata", @"Resources\Export")]
         [DeploymentItem(@"Resources\Export\Dataset_2025_07_31_12_31_11_Loaded.msp2", @"Resources\Export")]
